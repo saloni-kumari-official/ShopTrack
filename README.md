@@ -40,27 +40,6 @@ Technologies Used
 - Git
 - GitHub
 - VS Code
-
----
-
-Screenshots
-
-Dashboard
-
-
-
-Inventory
-
-
-
-Low Stock
-
-
-
-Order History
-
-
-
 ---
 
 Project Structure
