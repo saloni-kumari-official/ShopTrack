@@ -9,13 +9,14 @@ ShopTrack is an inventory manager for small shops. The repository includes a Fla
 - Low stock alerts and suggested reorder quantities
 - Supplier information and order history, with receive and cancel actions that update stock
 - SQLite storage for local use
-- Password protection and CSRF protection for the web app when deployed
+- Separate shop accounts with hashed passwords and isolated inventory/order data
+- CSRF protection, low stock tracking, and inventory/order CSV export
 
 ## Web app
 
 The web preview is hosted at [shoptrack-tg2e.onrender.com](https://shoptrack-tg2e.onrender.com). The first request can take about a minute after the free service wakes up.
 
-Demo login password: `ShopTrackDemo`. This is shared public access; anyone with the password can change the temporary demo inventory. Do not enter real business records.
+Create an account from the app. Each shop gets its own sign-in and separate inventory and order history.
 
 Run locally on Windows:
 
@@ -23,18 +24,17 @@ Run locally on Windows:
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-$env:APP_PASSWORD = "choose-a-local-password"
 $env:SECRET_KEY = "choose-a-long-random-secret"
 python app.py
 ```
 
-Open http://127.0.0.1:5000. Local development allows access without `APP_PASSWORD`; set it to enable the login page.
+Open http://127.0.0.1:5000 and create a shop account.
 
 ## Render setup
 
-Set `APP_PASSWORD` and `SECRET_KEY` as secret environment variables, and set `SESSION_COOKIE_SECURE=true`. `SHOPTRACK_DATABASE` selects the SQLite file path.
+Set a strong `SECRET_KEY` as a secret environment variable, and set `SESSION_COOKIE_SECURE=true`. `SHOPTRACK_DATABASE` selects the SQLite file path. Account records use that database; each shop's inventory and orders are stored in a separate database file alongside it.
 
-The current free Render web service uses an ephemeral filesystem. SQLite changes are lost on spin-down, restart, or redeploy. Use a paid persistent disk mounted at `/var/data` and set `SHOPTRACK_DATABASE=/var/data/shoptrack.db`, or migrate to managed Postgres, before storing real business records.
+The current free Render web service uses an ephemeral filesystem. Account and shop data can be lost on spin-down, restart, or redeploy. The app offers separate inventory and order CSV exports, but they do not back up accounts. There is no email verification or password recovery yet. Before inviting shops to rely on it for business records, connect durable database/storage and create a backup/restore plan. Treat the free hosted app as a pilot.
 
 ## Windows desktop app
 
