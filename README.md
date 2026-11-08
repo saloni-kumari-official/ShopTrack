@@ -13,7 +13,9 @@ ShopTrack is an inventory manager for small shops. The repository includes a Fla
 
 ## Web app
 
-The web preview is hosted at https://shoptrack-tg2e.onrender.com. The first request can take about a minute after the free service wakes up.
+The web preview is hosted at [shoptrack-tg2e.onrender.com](https://shoptrack-tg2e.onrender.com). The first request can take about a minute after the free service wakes up.
+
+Demo login password: `ShopTrackDemo`. This is shared public access; anyone with the password can change the temporary demo inventory. Do not enter real business records.
 
 Run locally on Windows:
 
