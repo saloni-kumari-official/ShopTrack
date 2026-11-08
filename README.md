@@ -7,7 +7,7 @@ ShopTrack is an inventory manager for small shops. The repository includes a Fla
 - Inventory dashboard and item search
 - Add, edit, delete, and update stock
 - Low stock alerts and suggested reorder quantities
-- Supplier information and order history
+- Supplier information and order history, with receive and cancel actions that update stock
 - SQLite storage for local use
 - Password protection and CSRF protection for the web app when deployed
 
@@ -39,4 +39,5 @@ The current free Render web service uses an ephemeral filesystem. SQLite changes
 ## Windows desktop app
 
 Download the `ShopTrack.exe` asset from the GitHub release page. The desktop build stores its working database under `%LOCALAPPDATA%\ShopTrack\shoptrack.db`.
+
 
