@@ -1,13 +1,20 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session, abort
+from flask import Flask, render_template, request, redirect, url_for, flash, session, abort, send_file, has_request_context
 import os
 import hmac
 import secrets
 import sqlite3
+import re
+import csv
+import io
+from pathlib import Path
 from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "local-development-only-change-me")
-APP_PASSWORD = os.environ.get("APP_PASSWORD")
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if os.environ.get("RENDER") and not SECRET_KEY:
+    raise RuntimeError("Set SECRET_KEY in the deployment environment before starting ShopTrack.")
+app.secret_key = SECRET_KEY or "local-development-only-change-me"
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "").lower() == "true")
 
 DATABASE = os.environ.get("SHOPTRACK_DATABASE", "shoptrack.db")
@@ -18,8 +25,19 @@ DATABASE = os.environ.get("SHOPTRACK_DATABASE", "shoptrack.db")
 # =========================================================
 
 def get_db_connection():
-    connection = sqlite3.connect(DATABASE)
+    database = DATABASE
+    shop_id = session.get("shop_id") if has_request_context() else None
+    if shop_id:
+        # A separate SQLite file gives every shop strict data isolation.
+        data_root = Path(DATABASE).resolve().parent / (Path(DATABASE).stem + "_shops")
+        data_root.mkdir(parents=True, exist_ok=True)
+        database = str(data_root / f"{shop_id}.db")
+    connection = sqlite3.connect(database)
     connection.row_factory = sqlite3.Row
+    if shop_id:
+        connection.execute("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, item_name TEXT NOT NULL UNIQUE, quantity INTEGER NOT NULL, minimum_stock INTEGER NOT NULL, supplier_name TEXT NOT NULL, supplier_phone TEXT NOT NULL)")
+        connection.execute("CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, item_id INTEGER, item_name TEXT, quantity INTEGER, supplier_name TEXT, supplier_phone TEXT, order_date TEXT, status TEXT DEFAULT 'Ordered')")
+        connection.commit()
     return connection
 
 
@@ -30,6 +48,16 @@ def get_db_connection():
 def init_database():
 
     connection = get_db_connection()
+
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS accounts (
+            id TEXT PRIMARY KEY,
+            shop_name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
 
     connection.execute("""
         CREATE TABLE IF NOT EXISTS items (
@@ -71,14 +99,9 @@ def protect_app():
         if not submitted_token or not expected_token or not hmac.compare_digest(submitted_token, expected_token):
             abort(400)
 
-    if request.endpoint in {"login", "static"}:
+    if request.endpoint in {"login", "register", "static"}:
         return
-    if not APP_PASSWORD:
-        if os.environ.get("RENDER"):
-            abort(503)
-        return
-
-    if not session.get("authenticated"):
+    if not session.get("shop_id"):
         return redirect(url_for("login", next=request.full_path))
 
 
@@ -86,27 +109,95 @@ def protect_app():
 def provide_csrf_token():
     if "_csrf_token" not in session:
         session["_csrf_token"] = secrets.token_urlsafe(32)
-    return {"csrf_token": session["_csrf_token"]}
+    return {"csrf_token": session["_csrf_token"], "pilot_mode": bool(os.environ.get("RENDER"))}
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
         candidate = request.form.get("password", "")
-        if APP_PASSWORD and hmac.compare_digest(candidate, APP_PASSWORD):
-            session["authenticated"] = True
+        connection = sqlite3.connect(DATABASE)
+        connection.row_factory = sqlite3.Row
+        account = connection.execute("SELECT * FROM accounts WHERE email = ?", (email,)).fetchone()
+        connection.close()
+        if account and check_password_hash(account["password_hash"], candidate):
+            session.clear()
+            session["shop_id"] = account["id"]
+            session["shop_name"] = account["shop_name"]
+            session["_csrf_token"] = secrets.token_urlsafe(32)
             destination = request.form.get("next", "")
             if not destination.startswith("/") or destination.startswith("//"):
                 destination = url_for("home")
             return redirect(destination)
-        flash("Password sahi nahi hai.", "error")
+        flash("Email or password is incorrect.", "error")
     return render_template("login.html", next=request.args.get("next", ""))
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        shop_name = request.form.get("shop_name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        if not shop_name or len(shop_name) > 80:
+            flash("Enter a shop name (up to 80 characters).", "error")
+            return render_template("register.html", shop_name=shop_name, email=email)
+        if len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+            flash("Enter a valid email address.", "error")
+            return render_template("register.html", shop_name=shop_name, email=email)
+        if len(password) < 10 or len(password) > 128:
+            flash("Use a password between 10 and 128 characters.", "error")
+            return render_template("register.html", shop_name=shop_name, email=email)
+        shop_id = secrets.token_hex(16)
+        connection = sqlite3.connect(DATABASE)
+        try:
+            connection.execute(
+                "INSERT INTO accounts (id, shop_name, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+                (shop_id, shop_name, email, generate_password_hash(password), datetime.utcnow().isoformat(timespec="seconds"))
+            )
+            connection.commit()
+        except sqlite3.IntegrityError:
+            flash("An account with this email already exists. Sign in instead.", "error")
+            return render_template("register.html", shop_name=shop_name, email=email)
+        finally:
+            connection.close()
+        session.clear()
+        session["shop_id"] = shop_id
+        session["shop_name"] = shop_name
+        session["_csrf_token"] = secrets.token_urlsafe(32)
+        return redirect(url_for("home"))
+    return render_template("register.html", shop_name="", email="")
 
 
 @app.route("/logout", methods=["POST"])
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/export-inventory")
+def export_inventory():
+    connection = get_db_connection()
+    rows = connection.execute("SELECT item_name, quantity, minimum_stock, supplier_name, supplier_phone FROM items ORDER BY item_name").fetchall()
+    connection.close()
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["Item", "Quantity", "Minimum stock", "Supplier", "Supplier phone"])
+    writer.writerows(rows)
+    return send_file(io.BytesIO(("\ufeff" + output.getvalue()).encode("utf-8")), mimetype="text/csv", as_attachment=True, download_name="shoptrack-inventory.csv")
+
+
+@app.route("/export-orders")
+def export_orders():
+    connection = get_db_connection()
+    rows = connection.execute("SELECT item_name, quantity, supplier_name, supplier_phone, order_date, status FROM orders ORDER BY id DESC").fetchall()
+    connection.close()
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["Item", "Quantity", "Supplier", "Supplier phone", "Order date", "Status"])
+    writer.writerows(rows)
+    return send_file(io.BytesIO(("\ufeff" + output.getvalue()).encode("utf-8")), mimetype="text/csv", as_attachment=True, download_name="shoptrack-orders.csv")
 
 @app.route("/")
 def home():
