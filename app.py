@@ -176,6 +176,10 @@ def add_item():
             flash("Minimum stock must be a number.", "error")
             return redirect(url_for("add_item"))
 
+        if not supplier_name:
+            flash("Supplier name is required.", "error")
+            return redirect(url_for("add_item"))
+
         if not supplier_phone.isdigit() or len(supplier_phone) != 10:
             flash("Phone number must contain 10 digits.", "error")
             return redirect(url_for("add_item"))
@@ -320,6 +324,16 @@ def edit_item(item_id):
         supplier_name = request.form["supplier_name"].strip()
         supplier_phone = request.form["supplier_phone"].strip()
 
+        if not item_name:
+            connection.close()
+            flash("Item name is required.", "error")
+            return redirect(url_for("edit_item", item_id=item_id))
+
+        if not supplier_name:
+            connection.close()
+            flash("Supplier name is required.", "error")
+            return redirect(url_for("edit_item", item_id=item_id))
+
         if not quantity.isdigit():
             connection.close()
             flash("Quantity must be a number.", "error")
@@ -399,6 +413,15 @@ def update_stock(item_id):
         return redirect(url_for("inventory"))
 
     connection = get_db_connection()
+
+    item_exists = connection.execute(
+        "SELECT id FROM items WHERE id = ?",
+        (item_id,)
+    ).fetchone()
+    if item_exists is None:
+        connection.close()
+        flash("Item not found.", "error")
+        return redirect(url_for("inventory"))
 
     connection.execute(
         """
@@ -597,6 +620,67 @@ def place_order(item_id):
 # =========================================================
 # ORDER HISTORY
 # =========================================================
+
+@app.route("/receive-order/<int:order_id>", methods=["POST"])
+def receive_order(order_id):
+    connection = get_db_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        order = connection.execute(
+            "SELECT * FROM orders WHERE id = ?",
+            (order_id,)
+        ).fetchone()
+        if order is None:
+            connection.rollback()
+            flash("Order not found.", "error")
+        elif order["status"] != "Ordered":
+            connection.rollback()
+            flash("This order has already been processed.", "error")
+        else:
+            item = connection.execute(
+                "SELECT id FROM items WHERE id = ?",
+                (order["item_id"],)
+            ).fetchone()
+            if item is None:
+                connection.rollback()
+                flash("The inventory item was deleted. Cancel this order instead.", "error")
+            else:
+                updated = connection.execute(
+                    "UPDATE orders SET status = 'Received' WHERE id = ? AND status = 'Ordered'",
+                    (order_id,)
+                )
+                if updated.rowcount != 1:
+                    connection.rollback()
+                    flash("This order has already been processed.", "error")
+                else:
+                    connection.execute(
+                        "UPDATE items SET quantity = quantity + ? WHERE id = ?",
+                        (order["quantity"], order["item_id"])
+                    )
+                    connection.commit()
+                    flash("Order received and stock updated.", "success")
+    finally:
+        connection.close()
+    return redirect(url_for("order_history"))
+
+
+@app.route("/cancel-order/<int:order_id>", methods=["POST"])
+def cancel_order(order_id):
+    connection = get_db_connection()
+    try:
+        updated = connection.execute(
+            "UPDATE orders SET status = 'Cancelled' WHERE id = ? AND status = 'Ordered'",
+            (order_id,)
+        )
+        connection.commit()
+        if updated.rowcount == 1:
+            flash("Order cancelled.", "success")
+        else:
+            flash("Only pending orders can be cancelled.", "error")
+    finally:
+        connection.close()
+    return redirect(url_for("order_history"))
+
 
 @app.route("/order-history")
 def order_history():
