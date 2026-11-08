@@ -5,6 +5,7 @@ venv/
 .env
 instance/
 shoptrack.db
+shoptrack_shops/
 *.sqlite
 *.sqlite3
 
