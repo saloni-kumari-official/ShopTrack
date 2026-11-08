@@ -71,7 +71,7 @@ def protect_app():
         if not submitted_token or not expected_token or not hmac.compare_digest(submitted_token, expected_token):
             abort(400)
 
-    if request.endpoint == "static":
+    if request.endpoint in {"login", "static"}:
         return
     if not APP_PASSWORD:
         if os.environ.get("RENDER"):
@@ -633,6 +633,10 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=int(os.environ.get("PORT", "5000"))
     )
+
+
+
+
 
 
 
